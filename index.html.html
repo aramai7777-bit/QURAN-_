@@ -847,6 +847,7 @@ footer{ border-top: 1px solid var(--line); padding: 56px clamp(16px,5vw,48px) 12
             <span class="style-tag" id="rpStyle">Murattal</span>
           </div>
         </div>
+        <div class="chip-row" id="rpMoshafRow" style="margin-bottom:22px;"></div>
         <div class="toolbar">
           <div class="field">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
@@ -1005,7 +1006,7 @@ footer{ border-top: 1px solid var(--line); padding: 56px clamp(16px,5vw,48px) 12
       <div class="credit">© 2026 Eng: Anas — All Rights Reserved</div>
     </div>
     <div class="footer-meta">
-      <div>Quran text &amp; audio data courtesy of the <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a> open API</div>
+      <div>Quran text courtesy of the <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a> API — recitations courtesy of <a href="https://www.mp3quran.net" target="_blank" rel="noopener">mp3quran.net</a></div>
       <div class="attribution">Please respect the data source's licensing and attribution terms when reusing this project.</div>
     </div>
   </div>
@@ -1016,12 +1017,25 @@ footer{ border-top: 1px solid var(--line); padding: 56px clamp(16px,5vw,48px) 12
    QURAN RECITATIONS — APPLICATION SCRIPT
    -------------------------------------------------------------------------
    DATA SOURCE / API INTEGRATION NOTE:
-   This app uses the public Quran.com API v4 (https://api.quran.com/api/v4)
-   for Surah metadata, verse text (Uthmani script) and reciter/audio data.
-   These are read-only, publicly documented endpoints and do not require a
-   private API key for the content used here. If you later move to an
-   endpoint that DOES require an OAuth client id/secret (e.g. some
-   content.quran.com endpoints), that call must be proxied through your own
+   Two separate public, no-key data sources are used on purpose:
+
+   1) Quran.com API v4 (https://api.quran.com/api/v4) — Surah metadata and
+      verse text (Uthmani script) only. Read-only, publicly documented.
+
+   2) mp3quran.net API (https://www.mp3quran.net/api/v3) — reciters and
+      chapter audio. This library was chosen over Quran.com's own audio
+      endpoints because it exposes each reciter's own audio server
+      directly (no separate "reciter ID" to cross-reference), has a much
+      larger roster of reciters (Al-Husary, Al-Tablawi, Al-Minshawi,
+      Al-Afasy, Al-Dosari, Al-Luhaidan, Al-Sudais, and many more), and
+      lists every "moshaf" (riwayah/style) a reciter actually recorded —
+      so the UI never offers a style that doesn't really exist for that
+      reciter. Quran.com's own audio API has since moved behind an OAuth2
+      client-credentials flow (apis.quran.foundation), which is a strong
+      reason on its own to keep audio on a source that stays key-free.
+
+   If you later introduce any endpoint that DOES require a private key or
+   OAuth client id/secret, that call must be proxied through your own
    backend so the secret is never exposed in this frontend file — see the
    `BACKEND_PROXY_NOTE` marker below for exactly where to plug that in.
    ========================================================================= */
@@ -1044,6 +1058,7 @@ const state = {
   reciters: [],
   currentChapter: null,
   currentReciterId: null,
+  currentMoshafId: null,
   currentVerses: [],
   bookmarks: JSON.parse(localStorage.getItem('qr_bookmarks') || '[]'),
   recentlyPlayed: JSON.parse(localStorage.getItem('qr_recent') || '[]'),
@@ -1237,8 +1252,18 @@ document.getElementById('nextSurahBtn').addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------------------
-// RECITERS — GET /resources/recitations
+// RECITERS & AUDIO — mp3quran.net public API (no auth, no key, very large
+// reciter roster). This replaced an earlier version of this file that used
+// Quran.com's `/resources/recitations` (ayah-by-ayah IDs) together with
+// `/chapter_recitations/{id}`, which expects a *different* ID space
+// (chapter-reciter IDs). Mixing those two ID spaces is what caused some
+// reciters to play back the wrong person's voice. mp3quran.net avoids the
+// problem entirely: each reciter's own "moshaf" (riwayah/style) entry
+// carries its own direct audio server, so there's no ID cross-referencing.
+// Docs: https://www.mp3quran.net/ar/api
 // ---------------------------------------------------------------------------
+const MP3QURAN_API = 'https://www.mp3quran.net/api/v3';
+
 async function loadReciters(){
   const grid = document.getElementById('reciterGrid');
   const skeleton = document.getElementById('reciterSkeleton');
@@ -1247,8 +1272,9 @@ async function loadReciters(){
   skeleton.style.display = 'grid';
   grid.style.display = 'none';
   try{
-    const data = await fetchJSON(`${QURAN_API}/resources/recitations?language=ar`);
-    state.reciters = data.recitations;
+    const data = await fetchJSON(`${MP3QURAN_API}/reciters?language=ar`);
+    // Keep only reciters that actually have at least one playable moshaf
+    state.reciters = (data.reciters || []).filter(r => r.moshaf && r.moshaf.length);
     document.getElementById('reciterCountStat').textContent = state.reciters.length;
     renderReciterGrid(state.reciters);
     skeleton.style.display = 'none';
@@ -1275,10 +1301,10 @@ function renderReciterGrid(list){
   }
   grid.innerHTML = list.map(r => `
     <button class="reciter-card" data-reciter="${r.id}">
-      <div class="reciter-avatar">${initials(r.reciter_name || r.translated_name?.name)}</div>
-      <div class="name-ar">${r.reciter_name || r.translated_name?.name || 'قارئ'}</div>
-      <div class="name-en">${r.style || ''}</div>
-      <span class="style-tag">${r.style || 'Murattal'}</span>
+      <div class="reciter-avatar">${initials(r.name)}</div>
+      <div class="name-ar">${r.name}</div>
+      <div class="name-en">${r.moshaf.length} ${r.moshaf.length > 1 ? 'روايات' : 'رواية'}</div>
+      <span class="style-tag">${r.moshaf[0].name.split(' - ')[1] || r.moshaf[0].name}</span>
     </button>
   `).join('');
   grid.querySelectorAll('.reciter-card').forEach(card => {
@@ -1288,7 +1314,7 @@ function renderReciterGrid(list){
 
 document.getElementById('reciterFilterInput').addEventListener('input', debounce(e => {
   const q = e.target.value.trim().toLowerCase();
-  const list = state.reciters.filter(r => (r.reciter_name || r.translated_name?.name || '').toLowerCase().includes(q));
+  const list = state.reciters.filter(r => r.name.toLowerCase().includes(q));
   renderReciterGrid(list);
 }, 200));
 
@@ -1296,18 +1322,18 @@ async function openReciterProfile(reciterId){
   const reciter = state.reciters.find(r => r.id === reciterId);
   if (!reciter) return;
   state.currentReciterId = reciterId;
+  state.currentMoshafId = reciter.moshaf[0].id;
   document.getElementById('recitersIndex').style.display = 'none';
   document.getElementById('reciterProfileView').classList.add('active');
-  document.getElementById('rpAvatar').textContent = initials(reciter.reciter_name);
-  document.getElementById('rpNameAr').textContent = reciter.reciter_name || reciter.translated_name?.name || 'قارئ';
-  document.getElementById('rpNameEn').textContent = reciter.translated_name?.name || '';
-  document.getElementById('rpStyle').textContent = reciter.style || 'Murattal';
+  document.getElementById('rpAvatar').textContent = initials(reciter.name);
+  document.getElementById('rpNameAr').textContent = reciter.name;
+  document.getElementById('rpNameEn').textContent = `${reciter.moshaf.length} ${reciter.moshaf.length > 1 ? 'روايات متاحة' : 'رواية متاحة'}`;
+  document.getElementById('rpStyle').textContent = reciter.moshaf[0].name;
   navigate('reciters');
 
-  const list = document.getElementById('rpList');
-  list.innerHTML = `<div class="ai-thinking"><span class="dot-pulse"></span><span class="dot-pulse"></span><span class="dot-pulse"></span> جاري تحميل السور المتاحة...</div>`;
+  renderMoshafChips(reciter);
 
-  // Ensure chapters are loaded (used for names) — fetch if empty
+  // Ensure Quran.com chapter metadata is loaded (used for Surah names)
   if (!state.chapters.length){
     try{ const d = await fetchJSON(`${QURAN_API}/chapters?language=ar`); state.chapters = d.chapters; }catch(e){}
   }
@@ -1318,9 +1344,40 @@ document.getElementById('backToReciters').addEventListener('click', () => {
   document.getElementById('recitersIndex').style.display = 'block';
 });
 
+function renderMoshafChips(reciter){
+  const row = document.getElementById('rpMoshafRow');
+  if (reciter.moshaf.length < 2){ row.innerHTML = ''; return; }
+  row.innerHTML = reciter.moshaf.map(m => `
+    <button class="chip ${m.id === state.currentMoshafId ? 'active' : ''}" data-moshaf="${m.id}">${m.name}</button>
+  `).join('');
+  row.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      state.currentMoshafId = parseInt(chip.dataset.moshaf);
+      row.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      document.getElementById('rpStyle').textContent = reciter.moshaf.find(m => m.id === state.currentMoshafId).name;
+      renderReciterSurahList(state.chapters);
+    });
+  });
+}
+
+function currentMoshaf(){
+  const reciter = state.reciters.find(r => r.id === state.currentReciterId);
+  if (!reciter) return null;
+  return reciter.moshaf.find(m => m.id === state.currentMoshafId) || reciter.moshaf[0];
+}
+
 function renderReciterSurahList(chapters){
+  const moshaf = currentMoshaf();
   const list = document.getElementById('rpList');
-  list.innerHTML = chapters.map(ch => `
+  if (!moshaf){ list.innerHTML = ''; return; }
+  const available = new Set(moshaf.surah_list.split(',').map(n => parseInt(n)));
+  const filtered = chapters.filter(ch => available.has(ch.id));
+  if (!filtered.length){
+    list.innerHTML = `<div class="empty-state"><p>لا توجد سور مطابقة ضمن هذه الرواية</p></div>`;
+    return;
+  }
+  list.innerHTML = filtered.map(ch => `
     <div class="rp-item">
       <div class="rp-num">${ch.id}</div>
       <div class="rp-name">
@@ -1337,13 +1394,13 @@ function renderReciterSurahList(chapters){
   `).join('');
   list.querySelectorAll('.rp-play[data-chapter]').forEach(btn => {
     btn.addEventListener('click', () => {
-      state.queue = chapters.map(c => c.id);
-      playChapterAudio(parseInt(btn.dataset.chapter), state.currentReciterId);
+      state.queue = filtered.map(c => c.id);
+      playChapterAudio(parseInt(btn.dataset.chapter), state.currentReciterId, state.currentMoshafId);
     });
   });
   list.querySelectorAll('.rp-play[data-download-chapter]').forEach(btn => {
     btn.addEventListener('click', () => {
-      downloadChapterAudio(parseInt(btn.dataset.downloadChapter), state.currentReciterId, btn);
+      downloadChapterAudio(parseInt(btn.dataset.downloadChapter), state.currentReciterId, state.currentMoshafId, btn);
     });
   });
 }
@@ -1356,37 +1413,50 @@ document.getElementById('rpSurahFilter').addEventListener('input', debounce(e =>
 document.getElementById('playSurahBtn').addEventListener('click', () => {
   const reciterId = state.currentReciterId || (state.reciters[0] && state.reciters[0].id);
   if (!reciterId){ navigate('reciters'); return; }
+  const reciter = state.reciters.find(r => r.id === reciterId);
+  const moshafId = state.currentMoshafId || reciter.moshaf[0].id;
   state.queue = state.chapters.map(c => c.id);
-  playChapterAudio(state.currentChapter.id, reciterId);
+  playChapterAudio(state.currentChapter.id, reciterId, moshafId);
 });
 
 // ---------------------------------------------------------------------------
-// AUDIO PLAYER — GET /chapter_recitations/:recitationId/:chapterId
+// AUDIO PLAYER — direct mp3quran.net chapter files: {server}{NNN}.mp3
 // ---------------------------------------------------------------------------
 const audioEl = document.getElementById('audioEl');
 const playerEl = document.getElementById('player');
 
-async function playChapterAudio(chapterId, reciterId){
+function buildAudioUrl(moshaf, chapterId){
+  const server = moshaf.server.endsWith('/') ? moshaf.server : moshaf.server + '/';
+  return `${server}${String(chapterId).padStart(3, '0')}.mp3`;
+}
+
+async function playChapterAudio(chapterId, reciterId, moshafId){
   const chapter = state.chapters.find(c => c.id === chapterId);
   const reciter = state.reciters.find(r => r.id === reciterId);
   if (!chapter || !reciter) return;
+  const moshaf = reciter.moshaf.find(m => m.id === moshafId) || reciter.moshaf[0];
+  const available = moshaf.surah_list.split(',').map(n => parseInt(n));
 
   playerEl.classList.add('open', 'loading');
   document.getElementById('playerSurahName').textContent = `${chapter.name_arabic} — ${chapter.name_simple}`;
-  document.getElementById('playerReciterName').textContent = reciter.reciter_name || reciter.translated_name?.name || 'قارئ';
+  document.getElementById('playerReciterName').textContent = reciter.name;
+
+  if (!available.includes(chapterId)){
+    playerEl.classList.remove('loading');
+    document.getElementById('playerReciterName').textContent = 'هذه السورة غير متوفرة لهذا القارئ/الرواية';
+    return;
+  }
 
   try{
-    const data = await fetchJSON(`${QURAN_API}/chapter_recitations/${reciterId}/${chapterId}`);
-    const url = data.audio_file && data.audio_file.audio_url;
-    if (!url) throw new Error('No audio URL returned');
-    audioEl.src = url.startsWith('http') ? url : `https://${url}`;
+    audioEl.src = buildAudioUrl(moshaf, chapterId);
     audioEl.play().catch(() => {});
     state.currentChapter = chapter;
     state.currentReciterId = reciterId;
+    state.currentMoshafId = moshaf.id;
 
     // Track "recently played" + "last position" for the Home page strips
-    state.recentlyPlayed = [{chapterId, reciterId}, ...state.recentlyPlayed.filter(r => !(r.chapterId===chapterId && r.reciterId===reciterId))].slice(0,8);
-    state.lastPosition = { chapterId, reciterId };
+    state.recentlyPlayed = [{chapterId, reciterId, moshafId: moshaf.id}, ...state.recentlyPlayed.filter(r => !(r.chapterId===chapterId && r.reciterId===reciterId))].slice(0,8);
+    state.lastPosition = { chapterId, reciterId, moshafId: moshaf.id };
     saveLocal();
     renderHomeStrips();
 
@@ -1401,56 +1471,38 @@ async function playChapterAudio(chapterId, reciterId){
 
 /* ---------------------------------------------------------------------
    DOWNLOAD A SINGLE RECITATION
-   Fetches the same chapter_recitations endpoint used for playback to get
-   the verified audio_url, then triggers a browser download. Some CDNs
-   don't send CORS headers for the audio file itself — when the direct
-   blob fetch fails, we fall back to opening the raw file URL in a new
-   tab so the user can still save it manually via "Save audio as...".
+   Builds the same direct mp3quran.net file URL used for playback and
+   triggers a plain browser download (an <a download> click) instead of
+   fetching the whole file into memory first — that's what made downloads
+   feel slow before. A direct link click lets the browser stream the file
+   straight to disk, which is faster and uses far less memory.
 --------------------------------------------------------------------- */
-async function downloadChapterAudio(chapterId, reciterId, triggerBtn){
+function downloadChapterAudio(chapterId, reciterId, moshafId, triggerBtn){
   const chapter = state.chapters.find(c => c.id === chapterId);
   const reciter = state.reciters.find(r => r.id === reciterId);
   if (!chapter || !reciter) return;
-
-  const originalHTML = triggerBtn ? triggerBtn.innerHTML : null;
-  if (triggerBtn){
-    triggerBtn.disabled = true;
-    triggerBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.9 4.9l2.9 2.9M16.2 16.2l2.9 2.9M2 12h4M18 12h4M4.9 19.1l2.9-2.9M16.2 7.8l2.9-2.9"/></svg>`;
+  const moshaf = reciter.moshaf.find(m => m.id === moshafId) || reciter.moshaf[0];
+  const available = moshaf.surah_list.split(',').map(n => parseInt(n));
+  if (!available.includes(chapterId)){
+    alert('هذه السورة غير متوفرة لهذا القارئ ضمن هذه الرواية.');
+    return;
   }
 
-  const fileName = `${chapter.id}-${chapter.name_simple}-${(reciter.reciter_name || 'reciter').replace(/\s+/g,'_')}.mp3`;
+  const url = buildAudioUrl(moshaf, chapterId);
+  const fileName = `${chapter.id}-${chapter.name_simple}-${reciter.name.replace(/\s+/g,'_')}.mp3`;
 
-  try{
-    const data = await fetchJSON(`${QURAN_API}/chapter_recitations/${reciterId}/${chapterId}`);
-    const rawUrl = data.audio_file && data.audio_file.audio_url;
-    if (!rawUrl) throw new Error('No audio URL returned');
-    const url = rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 
-    try{
-      // Preferred path: fetch as blob so we control the filename & force a save dialog
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Audio fetch failed: ' + res.status);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
-    }catch(blobErr){
-      // Fallback: open the raw file URL directly (CORS-blocked CDNs)
-      window.open(url, '_blank', 'noopener');
-    }
-  }catch(err){
-    console.error(err);
-    alert('تعذّر تحميل هذه التلاوة الآن. حاول مرة أخرى لاحقًا.');
-  }finally{
-    if (triggerBtn){
-      triggerBtn.disabled = false;
-      triggerBtn.innerHTML = originalHTML;
-    }
+  if (triggerBtn){
+    const original = triggerBtn.innerHTML;
+    triggerBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>`;
+    setTimeout(() => { triggerBtn.innerHTML = original; }, 1500);
   }
 }
 
@@ -1460,7 +1512,7 @@ audioEl.addEventListener('pause', () => { playerEl.classList.remove('playing'); 
 audioEl.addEventListener('ended', () => {
   const idx = state.queue.indexOf(state.currentChapter.id);
   const nextId = state.queue[idx + 1];
-  if (nextId) playChapterAudio(nextId, state.currentReciterId);
+  if (nextId) playChapterAudio(nextId, state.currentReciterId, state.currentMoshafId);
 });
 audioEl.addEventListener('timeupdate', () => {
   const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
@@ -1482,12 +1534,12 @@ document.getElementById('playerPlayBtn').addEventListener('click', () => {
 document.getElementById('playerNextBtn').addEventListener('click', () => {
   if (!state.currentChapter) return;
   const nextId = Math.min(114, state.currentChapter.id + 1);
-  playChapterAudio(nextId, state.currentReciterId);
+  playChapterAudio(nextId, state.currentReciterId, state.currentMoshafId);
 });
 document.getElementById('playerPrevBtn').addEventListener('click', () => {
   if (!state.currentChapter) return;
   const prevId = Math.max(1, state.currentChapter.id - 1);
-  playChapterAudio(prevId, state.currentReciterId);
+  playChapterAudio(prevId, state.currentReciterId, state.currentMoshafId);
 });
 document.getElementById('volumeSlider').addEventListener('input', e => {
   audioEl.volume = e.target.value / 100;
@@ -1504,12 +1556,14 @@ document.getElementById('playerSeekTrack2').addEventListener('click', e => seekF
 
 document.getElementById('playerDownloadBtn').addEventListener('click', function(){
   if (!state.currentChapter || !state.currentReciterId) return;
-  downloadChapterAudio(state.currentChapter.id, state.currentReciterId, this);
+  downloadChapterAudio(state.currentChapter.id, state.currentReciterId, state.currentMoshafId, this);
 });
 document.getElementById('downloadSurahBtn').addEventListener('click', function(){
   const reciterId = state.currentReciterId || (state.reciters[0] && state.reciters[0].id);
   if (!reciterId || !state.currentChapter){ navigate('reciters'); return; }
-  downloadChapterAudio(state.currentChapter.id, reciterId, this);
+  const reciter = state.reciters.find(r => r.id === reciterId);
+  const moshafId = state.currentMoshafId || reciter.moshaf[0].id;
+  downloadChapterAudio(state.currentChapter.id, reciterId, moshafId, this);
 });
 document.getElementById('playerBookmarkBtn').addEventListener('click', function(){
   this.classList.toggle('saved');
@@ -1538,19 +1592,20 @@ function buildStripCard(item, isContinue){
   const ch = state.chapters.find(c => c.id === item.chapterId);
   const rc = state.reciters.find(r => r.id === item.reciterId);
   if (!ch || !rc) return '';
+  const moshafId = item.moshafId || rc.moshaf[0].id;
   return `
-    <div class="continue-card glass" data-chapter="${ch.id}" data-reciter="${rc.id}">
+    <div class="continue-card glass" data-chapter="${ch.id}" data-reciter="${rc.id}" data-moshaf="${moshafId}">
       <div class="continue-art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
       <div class="continue-meta">
         <div class="surah">${ch.name_arabic}</div>
-        <div class="reciter">${rc.reciter_name || ''}</div>
+        <div class="reciter">${rc.name || ''}</div>
       </div>
       <button class="continue-play" aria-label="تشغيل"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
     </div>`;
 }
 function bindStripCards(containerId){
   document.getElementById(containerId).querySelectorAll('.continue-card').forEach(card => {
-    const play = () => playChapterAudio(parseInt(card.dataset.chapter), parseInt(card.dataset.reciter));
+    const play = () => playChapterAudio(parseInt(card.dataset.chapter), parseInt(card.dataset.reciter), parseInt(card.dataset.moshaf));
     card.querySelector('.continue-play').addEventListener('click', play);
     card.addEventListener('click', (e) => { if (!e.target.closest('.continue-play')) play(); });
   });
@@ -1689,14 +1744,14 @@ document.getElementById('globalSearchInput').addEventListener('input', debounce(
   const resultsEl = document.getElementById('globalSearchResults');
   if (!q){ resultsEl.innerHTML = ''; return; }
   const surahHits = state.chapters.filter(c => c.name_simple.toLowerCase().includes(q) || c.name_arabic.includes(q) || String(c.id) === q).slice(0,5);
-  const reciterHits = state.reciters.filter(r => (r.reciter_name || '').toLowerCase().includes(q)).slice(0,5);
+  const reciterHits = state.reciters.filter(r => (r.name || '').toLowerCase().includes(q)).slice(0,5);
   if (!surahHits.length && !reciterHits.length){
     resultsEl.innerHTML = `<div class="empty-state" style="padding:30px 0;"><p>لا توجد نتائج</p></div>`;
     return;
   }
   resultsEl.innerHTML = [
     ...surahHits.map(c => `<button class="search-result-item" data-type="surah" data-id="${c.id}"><span class="cat">سورة</span> ${c.name_arabic} — ${c.name_simple}</button>`),
-    ...reciterHits.map(r => `<button class="search-result-item" data-type="reciter" data-id="${r.id}"><span class="cat">قارئ</span> ${r.reciter_name}</button>`)
+    ...reciterHits.map(r => `<button class="search-result-item" data-type="reciter" data-id="${r.id}"><span class="cat">قارئ</span> ${r.name}</button>`)
   ].join('');
   resultsEl.querySelectorAll('.search-result-item').forEach(item => {
     item.addEventListener('click', () => {
