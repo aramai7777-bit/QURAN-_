@@ -43,6 +43,9 @@
   --radius-l:     26px;
   --shadow-deep:  0 20px 60px rgba(0,0,0,0.45);
   --ease:         cubic-bezier(.22,.61,.36,1);
+  /* Height reserved at the bottom of the screen for the mobile nav bar.
+     0 on desktop (no bar); overridden in the mobile media query below. */
+  --bottom-nav-h: 0px;
 }
 
 *{ box-sizing: border-box; }
@@ -121,6 +124,17 @@ img{ max-width: 100%; display:block; }
 .brand-text{ display:flex; flex-direction:column; line-height:1.1; }
 .brand-text .ar{ font-family:'Aref Ruqaa'; font-size:1.15rem; color:var(--gold-bright); }
 .brand-text .en{ font-size:0.68rem; letter-spacing:0.14em; color:var(--ivory-faint); }
+/* Author credit shown beside the logo, separated by a thin gold rule */
+.brand-author{
+  font-family:'Cormorant Garamond', serif; font-style: italic;
+  font-size: 0.95rem; color: var(--gold); white-space: nowrap;
+  padding-inline-start: 14px; margin-inline-start: 4px;
+  border-inline-start: 1px solid var(--line-strong);
+  letter-spacing: 0.02em;
+}
+@media (max-width: 520px){
+  .brand-author{ display:none; }
+}
 
 .nav-links{ display:flex; align-items:center; gap: 6px; }
 .nav-links button{
@@ -500,10 +514,10 @@ img{ max-width: 100%; display:block; }
    STICKY AUDIO PLAYER
    ========================================================= */
 .player{
-  position: fixed; bottom:0; inset-inline:0; z-index: 60;
+  position: fixed; bottom: var(--bottom-nav-h, 0px); inset-inline:0; z-index: 60;
   background: rgba(8,20,17,0.92); backdrop-filter: blur(16px);
   border-top: 1px solid var(--line-strong);
-  transform: translateY(110%);
+  transform: translateY(calc(110% + var(--bottom-nav-h, 0px)));
   transition: transform .4s var(--ease);
 }
 .player.open{ transform: translateY(0); }
@@ -586,7 +600,10 @@ footer{ border-top: 1px solid var(--line); padding: 56px clamp(16px,5vw,48px) 12
 .mobile-nav{
   position: fixed; bottom: 0; inset-inline:0; z-index: 70;
   background: rgba(8,20,17,0.96); border-top:1px solid var(--line);
-  display:none; justify-content: space-around; padding: 10px 6px;
+  display:none; justify-content: space-around; align-items: center; padding: 8px 6px;
+  /* respect the iOS/Android home-indicator area so the bar isn't cut off */
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  height: var(--bottom-nav-h);
 }
 .mobile-nav button{ background:none; border:none; color:var(--ivory-faint); display:flex; flex-direction:column; align-items:center; gap:4px; font-size:0.65rem; flex:1; }
 .mobile-nav button.active{ color: var(--gold-bright); }
@@ -595,7 +612,12 @@ footer{ border-top: 1px solid var(--line); padding: 56px clamp(16px,5vw,48px) 12
 @media (max-width: 860px){
   .nav-links{ display:none; }
   .mobile-nav{ display:flex; }
-  .player{ }
+  /* On mobile the bottom nav bar exists, so the sticky audio player must
+     sit directly ABOVE it instead of underneath it. Everything that pins
+     to the bottom of the screen reads this one variable. */
+  :root{ --bottom-nav-h: calc(62px + env(safe-area-inset-bottom, 0px)); }
+  .back-to-top{ bottom: calc(var(--bottom-nav-h) + 104px); }
+  footer{ padding-bottom: calc(var(--bottom-nav-h) + 140px); }
 }
 
 .view{ display:none; }
@@ -628,6 +650,7 @@ footer{ border-top: 1px solid var(--line); padding: 56px clamp(16px,5vw,48px) 12
         <span class="ar">القرآن الكريم</span>
         <span class="en">QURAN RECITATIONS</span>
       </div>
+      <span class="brand-author">anas mohamed</span>
     </div>
 
     <nav class="nav-links" role="navigation" aria-label="Main navigation">
